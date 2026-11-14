@@ -2444,7 +2444,7 @@ A patch cannot change the Flutter version a release was built with. To fix this,
         });
 
         test(
-          'builds an obfuscated release\'s patch with its obfuscation map',
+          "builds an obfuscated release's patch with its obfuscation map",
           () async {
             when(
               () => codePushClientWrapper.getRelease(

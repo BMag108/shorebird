@@ -26,7 +26,7 @@ Future<int> runInheritingStdio(
     environment: environment,
     mode: ProcessStartMode.inheritStdio,
   );
-  return await process.exitCode;
+  return process.exitCode;
 }
 
 /// Runs [command] in [workingDirectory] unless a pass over the same inputs
@@ -66,7 +66,7 @@ Future<int> runCached({
   final checkout = await GitTree.find(workingDirectory);
   if (checkout == null) {
     log('not in a git checkout, so the result cache is not used');
-    return await run(command, workingDirectory);
+    return run(command, workingDirectory);
   }
   Future<Map<String, String>?> hashInputs() async {
     final tree = await checkout.workingTreeHash();
@@ -76,7 +76,7 @@ Future<int> runCached({
   final hashes = await hashInputs();
   if (hashes == null) {
     log('git could not hash the working tree, so the result cache is not used');
-    return await run(command, workingDirectory);
+    return run(command, workingDirectory);
   }
   for (final MapEntry(key: path, value: hash) in hashes.entries) {
     // A path a pubspec names that is gone, perhaps renamed, still gives a
