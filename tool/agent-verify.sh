@@ -23,10 +23,20 @@ if [ ! -f "$repo_root/tool/agent_verify.dart" ]; then
   echo "error: $repo_root has no tool/agent_verify.dart, so it is not a checkout of shorebirdtech/shorebird or is one from before agent-verify" >&2
   exit 2
 fi
-if ! command -v dart >/dev/null 2>&1; then
-  echo 'error: dart not found, so nothing was verified' >&2
+
+# A Dart of the version CI runs; why the version is the whole rule is in
+# tool/find_dart.sh.
+source "$repo_root/tool/find_dart.sh"
+find_dart "$repo_root"
+
+# Without one nothing ran, which is not a pass.
+if [ -z "$dart_bin" ]; then
   exit 3
 fi
+export PATH="$(dirname "$dart_bin"):$PATH"
+# To stderr, because --plan's stdout is a list meant to be read by something
+# else.
+echo "agent-verify: $dart_bin, $(dart --version 2>&1)" >&2
 
 # The checkout the caller stands in, not the one beside this script.
 cd "$repo_root"

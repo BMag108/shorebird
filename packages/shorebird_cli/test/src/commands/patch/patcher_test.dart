@@ -15,6 +15,7 @@ import 'package:shorebird_cli/src/logging/logging.dart';
 import 'package:shorebird_cli/src/patch_diff_checker.dart';
 import 'package:shorebird_cli/src/platform/platform.dart';
 import 'package:shorebird_cli/src/release_type.dart';
+import 'package:shorebird_cli/src/shorebird_documentation.dart';
 import 'package:shorebird_code_push_client/shorebird_code_push_client.dart';
 import 'package:test/test.dart';
 
@@ -43,6 +44,28 @@ void main() {
           ).linkPercentage,
           isNull,
         );
+      });
+    });
+
+    group('lowLinkPercentageWarning', () {
+      test('truncates the percentage and links to the performance docs', () {
+        final warning = Patcher.lowLinkPercentageWarning(12.345678901234567);
+        expect(warning, contains('share 12.3% of Dart code'));
+        expect(warning, contains(linkPercentageUrl));
+      });
+
+      test('does not round a value just under 20% up to 20.0%', () {
+        final warning = Patcher.lowLinkPercentageWarning(19.97);
+        expect(warning, contains('share 19.9% of Dart code'));
+      });
+    });
+
+    group('formatLinkPercentage', () {
+      test('shows one decimal place, truncated', () {
+        expect(Patcher.formatLinkPercentage(62.1337), equals('62.1'));
+        expect(Patcher.formatLinkPercentage(19.97), equals('19.9'));
+        expect(Patcher.formatLinkPercentage(19.9), equals('19.9'));
+        expect(Patcher.formatLinkPercentage(20), equals('20.0'));
       });
     });
 
@@ -298,6 +321,7 @@ void main() {
             platform: any(named: 'platform'),
             track: any(named: 'track'),
             patchArtifactBundles: any(named: 'patchArtifactBundles'),
+            rolloutPercentage: any(named: 'rolloutPercentage'),
           ),
         ).thenAnswer((_) async => const CreatePatchResponse(id: 1, number: 1));
         await runScoped(
@@ -308,6 +332,7 @@ void main() {
               metadata: metadata,
               artifacts: artifacts,
               track: track,
+              rolloutPercentage: 10,
             );
           },
           values: {
@@ -322,6 +347,7 @@ void main() {
             platform: ReleaseType.android.releasePlatform,
             track: track,
             patchArtifactBundles: artifacts,
+            rolloutPercentage: 10,
           ),
         ).called(1);
       });

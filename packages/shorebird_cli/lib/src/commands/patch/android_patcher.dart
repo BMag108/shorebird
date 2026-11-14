@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:mason_logger/mason_logger.dart';
-import 'package:pub_semver/pub_semver.dart';
 import 'package:shorebird_cli/src/archive_analysis/android_archive_differ.dart';
 import 'package:shorebird_cli/src/artifact_builder/artifact_builder.dart';
 import 'package:shorebird_cli/src/artifact_manager.dart';
@@ -18,6 +17,7 @@ import 'package:shorebird_cli/src/patch_diff_checker.dart';
 import 'package:shorebird_cli/src/platform/platform.dart';
 import 'package:shorebird_cli/src/release_type.dart';
 import 'package:shorebird_cli/src/shorebird_android_artifacts.dart';
+import 'package:shorebird_cli/src/shorebird_env.dart';
 import 'package:shorebird_cli/src/shorebird_flutter.dart';
 import 'package:shorebird_code_push_client/shorebird_code_push_client.dart';
 
@@ -33,15 +33,15 @@ class AndroidPatcher extends Patcher with AndroidPatcherMixin {
     required super.target,
   });
 
-  /// Android versions prior to 3.24.2 have a bug that can cause patches to
-  /// be erroneously uninstalled.
-  /// https://github.com/shorebirdtech/updater/issues/211 was fixed in 3.24.2
+  /// Flutter versions prior to 3.24.2 have a bug that can cause patches to
+  /// be erroneously uninstalled on Android. See the November 17, 2025 note at
+  /// https://docs.shorebird.dev/getting-started/flutter-version/#flutter-version-notes
   static final updaterPatchErrorWarning =
       '''
 Your version of flutter contains a known issue that can cause patches to be erroneously uninstalled in apps that use package:flutter_foreground_task or other plugins that start their own Flutter engines.
-This issue was fixed in Flutter 3.24.2. Please upgrade to a newer version of Flutter to avoid this issue.
+This issue was fixed in Flutter 3.24.2, and in Flutter 3.24.1 for releases created with Shorebird 1.3.1 or later. Please upgrade to a newer version of Flutter to avoid this issue.
 
-See more info about the issue ${link(uri: Uri.parse('https://github.com/shorebirdtech/updater/issues/211'), message: 'on Github')}
+See more info about the issue ${link(uri: Uri.parse('https://docs.shorebird.dev/getting-started/flutter-version/#flutter-version-notes'), message: 'in the Shorebird docs')}
 ''';
 
   /// The patch AAB built by [buildPatchArtifact], which
@@ -63,14 +63,16 @@ See more info about the issue ${link(uri: Uri.parse('https://github.com/shorebir
     required ReleaseArtifact releaseArtifact,
     required File releaseArchive,
     required File patchArchive,
-  }) => patchDiffChecker.confirmUnpatchableDiffsIfNecessary(
-    localArchive: patchArchive,
-    releaseArchive: releaseArchive,
-    archiveDiffer: const AndroidArchiveDiffer(),
-    allowAssetChanges: allowAssetDiffs,
-    allowNativeChanges: allowNativeDiffs,
-    showDexDiff: showDexDiff,
-  );
+  }) async {
+    return patchDiffChecker.confirmUnpatchableDiffsIfNecessary(
+      localArchive: patchArchive,
+      releaseArchive: releaseArchive,
+      archiveDiffer: const AndroidArchiveDiffer(),
+      allowAssetChanges: allowAssetDiffs,
+      allowNativeChanges: allowNativeDiffs,
+      showDexDiff: showDexDiff,
+    );
+  }
 
   @override
   Future<void> assertPreconditions() => assertBuildPreconditions(
@@ -80,23 +82,26 @@ See more info about the issue ${link(uri: Uri.parse('https://github.com/shorebir
   @override
   Future<File> buildPatchArtifact({String? releaseVersion}) async {
     final flutterVersion = await shorebirdFlutter.getVersion();
-    // Android versions prior to 3.24.2 have a bug that can cause patches to
-    // be erroneously uninstalled.
-    // https://github.com/shorebirdtech/updater/issues/211 was fixed in 3.24.2
-    if (flutterVersion != null && flutterVersion < Version(3, 24, 2)) {
+    // Flutter versions prior to 3.24.2 (except the patched 3.24.1 revision)
+    // have a bug that can cause patches to be erroneously uninstalled on
+    // Android. See [updaterPatchErrorWarning].
+    if (flutterVersion != null &&
+        !updaterPatchErrorFixConstraint.isSatisfiedBy(
+          version: flutterVersion,
+          revision: shorebirdEnv.flutterRevision,
+        )) {
       logger.warn(updaterPatchErrorWarning);
     }
 
-    final buildArgs = [
-      ...argResults.forwardedArgs,
-      ...extraBuildArgs,
-      ...buildNameAndNumberArgsFromReleaseVersion(releaseVersion),
-    ];
     final aabFile = await artifactBuilder.buildAppBundle(
       flavor: flavor,
       target: target,
       targetPlatforms: releaseTargetPlatforms,
-      args: buildArgs,
+      args: [
+        ...argResults.forwardedArgs,
+        ...extraBuildArgs,
+        ...buildNameAndNumberArgsFromReleaseVersion(releaseVersion),
+      ],
       base64PublicKey: await getEncodedPublicKey(),
     );
 

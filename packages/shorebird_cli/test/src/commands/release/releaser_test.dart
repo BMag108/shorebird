@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
@@ -6,6 +7,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:path/path.dart' as p;
 import 'package:scoped_deps/scoped_deps.dart';
 import 'package:shorebird_cli/src/artifact_manager.dart';
+import 'package:shorebird_cli/src/build_flags.dart';
 import 'package:shorebird_cli/src/code_push_client_wrapper.dart';
 import 'package:shorebird_cli/src/code_signer.dart';
 import 'package:shorebird_cli/src/commands/release/releaser.dart';
@@ -622,22 +624,45 @@ void main() {
         ).called(1);
       });
 
-      test('returns null when there is no supplement directory', () {
+      test('returns null when there is no project', () {
         supplementDir.deleteSync(recursive: true);
+        when(
+          () => artifactManager.getReleaseSupplementDirectory(
+            platformSubdir: any(named: 'platformSubdir'),
+            create: any(named: 'create'),
+          ),
+        ).thenReturn(null);
 
         final result = runWithOverrides(releaser.assembleSupplementDirectory);
 
         expect(result, isNull);
       });
 
-      test('removes a stale obfuscation map and returns null', () {
+      test('records the build flags as hashes', () {
+        when(() => argResults.wasParsed('dart-define')).thenReturn(true);
+        when(() => argResults['dart-define']).thenReturn(['API_KEY=secret']);
+
+        final result = runWithOverrides(releaser.assembleSupplementDirectory);
+
+        final recorded = File(
+          p.join(result!.path, 'build_flags.json'),
+        ).readAsStringSync();
+        expect(recorded, isNot(contains('secret')));
+        expect(
+          BuildFlags.fromJson(
+            json.decode(recorded) as Map<String, dynamic>,
+          ).dartDefines.keys,
+          equals(['API_KEY']),
+        );
+      });
+
+      test('removes a stale obfuscation map', () {
         File(p.join(supplementDir.path, 'obfuscation_map.json'))
           ..createSync(recursive: true)
           ..writeAsStringSync('{"stale": true}');
 
-        final result = runWithOverrides(releaser.assembleSupplementDirectory);
+        runWithOverrides(releaser.assembleSupplementDirectory);
 
-        expect(result, isNull);
         expect(
           File(p.join(supplementDir.path, 'obfuscation_map.json')).existsSync(),
           isFalse,

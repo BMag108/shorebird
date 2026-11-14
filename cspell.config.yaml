@@ -1,7 +1,7 @@
 $schema: https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json
 version: "0.2"
 ignorePaths:
-  ["coverage", "bin/cache", "third_party", "build", "*.xcscheme", "fixtures"]
+  ["coverage", "bin/cache", "third_party", "build", "*.xcscheme", "fixtures", "RELEASE_NOTES.md"]
 words:
   - aabs
   - aapt
@@ -46,6 +46,7 @@ words:
   - dylib
   - endtemplate
   - Entra
+  - esac # bash case terminator
   - eseidel
   - exitcode
   - exportoptions
@@ -98,6 +99,8 @@ words:
   - noaudio # From .github dir, doesn't show up in "**" check?
   - NOAUTH
   - nonobvious # From analysis_options.yaml
+  - noprofile # bash --noprofile
+  - norc # bash --norc
   - nserror
   - OCSF # Open Cybersecurity Schema Framework, the audit log format
   - Oltman
@@ -107,6 +110,7 @@ words:
   - pana
   - pbxproj
   - pinact # Third-party action-pinning tool referenced in shorebird_ci
+  - pipefail
   - Perfetto # Chrome trace viewer at ui.perfetto.dev
   - PKCE # OAuth Proof Key for Code Exchange (RFC 7636)
   - pkcs
@@ -132,6 +136,7 @@ words:
   - resends # "server resends the same patch on rollforward"
   - reusables
   - rollforward # POST /.../patches/<id>/rollforward — un-rolls-back a patch
+  - rollouts # percentage rollouts of a patch on its track
   - spawnee
   - Retryable
   - RSAPKCS
@@ -157,6 +162,8 @@ words:
   - temurin # From .github dir, doesn't show up in "**" check?
   - timebase # Mach timebase (mach_timebase_info)
   - toplevel # git rev-parse --show-toplevel
+  - tracefile # lcov coverage file
+  - tracefiles
   - ttfb
   - udevadm # From .github/workflows/e2e.yaml
   - udid # Unique Device Identifier

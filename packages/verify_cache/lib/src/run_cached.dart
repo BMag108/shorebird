@@ -112,25 +112,25 @@ Future<int> runCached({
   if (reportHit()) return 0;
   if (force) log('--force, running without consulting the cache');
 
-  final lock = await KeyLock.acquire(
-    cacheDirectory,
-    digest,
-    onWait: () => log('another run is verifying these inputs, waiting'),
-  );
+  final slot = slots == null
+      ? null
+      : await RunSlot.acquire(
+          cacheDirectory,
+          slots,
+          onWait: () => log(
+            '$slots runs are already checking on this machine, waiting '
+            'for one to finish (VERIFY_CACHE_SLOTS sets how many)',
+          ),
+        );
   try {
-    // The run that held the lock may have just passed these inputs.
-    if (reportHit()) return 0;
-    final slot = slots == null
-        ? null
-        : await RunSlot.acquire(
-            cacheDirectory,
-            slots,
-            onWait: () => log(
-              '$slots runs are already checking on this machine, waiting '
-              'for one to finish (VERIFY_CACHE_SLOTS sets how many)',
-            ),
-          );
+    final lock = await KeyLock.acquire(
+      cacheDirectory,
+      digest,
+      onWait: () => log('another run is verifying these inputs, waiting'),
+    );
     try {
+      // The run that held the slot or lock may have just passed these inputs.
+      if (reportHit()) return 0;
       if (!force) log('no recorded pass for these inputs, running');
 
       final started = DateTime.now();
@@ -154,10 +154,10 @@ Future<int> runCached({
       log('recorded this pass as $digest');
       return 0;
     } finally {
-      await slot?.release();
+      await lock.release();
     }
   } finally {
-    await lock.release();
+    await slot?.release();
   }
 }
 

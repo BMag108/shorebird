@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:scoped_deps/scoped_deps.dart';
 import 'package:shorebird_cli/src/artifact_builder/artifact_builder.dart';
 import 'package:shorebird_cli/src/artifact_builder/build_trace_session.dart';
+import 'package:shorebird_cli/src/build_history.dart';
 import 'package:shorebird_cli/src/cache.dart';
 import 'package:shorebird_cli/src/code_push_client_wrapper.dart';
 import 'package:shorebird_cli/src/commands/release/release.dart';
@@ -28,6 +29,7 @@ import 'package:shorebird_cli/src/third_party/flutter_tools/lib/src/base/process
 import 'package:shorebird_code_push_client/shorebird_code_push_client.dart';
 import 'package:test/test.dart';
 
+import '../../fakes.dart';
 import '../../helpers.dart';
 import '../../matchers.dart';
 import '../../mocks.dart';
@@ -65,6 +67,8 @@ void main() {
     late ArgResults argResults;
     late ArtifactBuilder artifactBuilder;
     late Cache cache;
+    late BuildHistory buildHistory;
+    late CodePushClient codePushClient;
     late CodePushClientWrapper codePushClientWrapper;
     late Directory shorebirdRoot;
     late Directory projectRoot;
@@ -86,6 +90,7 @@ void main() {
             () => BuildTraceSession(commandStartedAt: DateTime(2023)),
           ),
           cacheRef.overrideWith(() => cache),
+          buildHistoryRef.overrideWith(() => buildHistory),
           codePushClientWrapperRef.overrideWith(() => codePushClientWrapper),
           loggerRef.overrideWith(() => logger),
           shorebirdEnvRef.overrideWith(() => shorebirdEnv),
@@ -96,6 +101,7 @@ void main() {
     }
 
     setUpAll(() {
+      registerFallbackValue(FakeCreateBuildRunRequest());
       registerFallbackValue(Directory(''));
       registerFallbackValue(release);
       registerFallbackValue(ReleasePlatform.android);
@@ -113,7 +119,18 @@ void main() {
       ).thenAnswer((_) async {});
       when(artifactBuilder.writeBuildTraceSummary).thenReturn(null);
       cache = MockCache();
+      buildHistory = BuildHistory(runId: 'run-id');
+      codePushClient = MockCodePushClient();
       codePushClientWrapper = MockCodePushClientWrapper();
+      when(
+        () => codePushClientWrapper.codePushClient,
+      ).thenReturn(codePushClient);
+      when(
+        () => codePushClient.createBuildRun(
+          appId: any(named: 'appId'),
+          request: any(named: 'request'),
+        ),
+      ).thenAnswer((_) async => const CreateBuildRunResponse(id: 1));
       logger = MockShorebirdLogger();
       progress = MockProgress();
       releaser = MockReleaser();
@@ -389,6 +406,149 @@ void main() {
           '''To create a patch for this release, run ${lightCyan.wrap('shorebird patch --platforms=android --release-version=${release.version}')}''',
         ),
       ]);
+    });
+
+    group("when the app's enterprise requires patch signing", () {
+      setUp(() {
+        when(
+          () => codePushClientWrapper.getApp(appId: any(named: 'appId')),
+        ).thenAnswer(
+          (_) async => AppMetadata(
+            appId: appId,
+            displayName: appDisplayName,
+            createdAt: DateTime(2023),
+            updatedAt: DateTime(2023),
+            patchSigningRequired: true,
+            enterpriseName: 'Acme Corp',
+          ),
+        );
+      });
+
+      test('refuses --no-patch-signing before building', () async {
+        when(
+          () => argResults[CommonArguments.patchSigningArg.name],
+        ).thenReturn(false);
+        for (final arg in [
+          CommonArguments.publicKeyArg.name,
+          CommonArguments.publicKeyCmd.name,
+        ]) {
+          when(() => argResults.wasParsed(arg)).thenReturn(false);
+        }
+
+        await expectLater(
+          () => runWithOverrides(command.run),
+          exitsWithError(
+            message:
+                "Acme Corp requires patch signing, so a release can't be "
+                'built without it.',
+            hint: 'Release again without --no-patch-signing.',
+            exitCode: ExitCode.noPerm,
+          ),
+        );
+        verifyNever(
+          () => shorebirdFlutter.installRevision(
+            revision: any(named: 'revision'),
+          ),
+        );
+        verifyNever(() => releaser.buildReleaseArtifacts());
+      });
+
+      test('releases when patches are signed', () async {
+        final exitCode = await runWithOverrides(command.run);
+        expect(exitCode, equals(ExitCode.success.code));
+      });
+    });
+
+    group('build history', () {
+      CreateBuildRunRequest sentRun() =>
+          verify(
+                () => codePushClient.createBuildRun(
+                  appId: appId,
+                  request: captureAny(named: 'request'),
+                ),
+              ).captured.single
+              as CreateBuildRunRequest;
+
+      test('records a published release as succeeded', () async {
+        await runWithOverrides(command.run);
+
+        final run = sentRun();
+        expect(run.runId, equals('run-id'));
+        expect(run.command, equals(BuildRunCommand.release));
+        expect(run.platform, equals(ReleasePlatform.android));
+        expect(run.outcome, equals(BuildRunOutcome.succeeded));
+        expect(run.reason, isNull);
+        expect(run.releaseId, equals(release.id));
+        expect(run.patchId, isNull);
+        expect(run.dryRun, isFalse);
+        expect(run.metadata, isNotNull);
+      });
+
+      test('records a dry run that found no issues', () async {
+        when(() => argResults['dry-run']).thenReturn(true);
+
+        await expectLater(
+          runWithOverrides(command.run),
+          exitsWithCode(ExitCode.success),
+        );
+
+        final run = sentRun();
+        expect(run.outcome, equals(BuildRunOutcome.succeeded));
+        expect(run.dryRun, isTrue);
+        expect(run.releaseId, isNull);
+        expect(run.metadata, isNotNull);
+      });
+
+      test('records a failed build', () async {
+        when(
+          () => releaser.buildReleaseArtifacts(),
+        ).thenThrow(Exception('xcode'));
+
+        await expectLater(
+          runWithOverrides(command.run),
+          exitsWithCode(ExitCode.software),
+        );
+
+        final run = sentRun();
+        expect(run.outcome, equals(BuildRunOutcome.failed));
+        expect(run.reason, equals(BuildRunFailureReason.buildFailed));
+      });
+
+      test('records a failed upload', () async {
+        when(
+          () => releaser.uploadReleaseArtifacts(
+            release: any(named: 'release'),
+            appId: any(named: 'appId'),
+          ),
+        ).thenThrow(ProcessExit(ExitCode.software.code));
+
+        await expectLater(
+          runWithOverrides(command.run),
+          exitsWithCode(ExitCode.software),
+        );
+
+        final run = sentRun();
+        expect(run.reason, equals(BuildRunFailureReason.uploadFailed));
+        expect(run.releaseId, equals(release.id));
+      });
+
+      test('records nothing before the app is confirmed', () async {
+        when(
+          () => codePushClientWrapper.getApp(appId: any(named: 'appId')),
+        ).thenThrow(ProcessExit(ExitCode.software.code));
+
+        await expectLater(
+          runWithOverrides(command.run),
+          exitsWithCode(ExitCode.software),
+        );
+
+        verifyNever(
+          () => codePushClient.createBuildRun(
+            appId: any(named: 'appId'),
+            request: any(named: 'request'),
+          ),
+        );
+      });
     });
 
     group('when build fails', () {
@@ -1408,6 +1568,49 @@ Did you mean --release-version=1.0.0+1?''',
           );
         },
       );
+
+      group('when the Flutter version is a Shorebird side version', () {
+        late MockReleaser releaser;
+
+        setUp(() {
+          releaser = MockReleaser();
+          when(() => releaser.useObfuscation).thenReturn(false);
+          when(
+            () => releaser.minimumFlutterVersion,
+          ).thenReturn(Version(0, 0, 0));
+          when(releaser.assertArgsAreValid).thenAnswer((_) async => {});
+        });
+
+        test('clears the release floor its upstream version clears', () async {
+          final sideVersion = Version.parse('3.32.6-sb.1');
+          expect(sideVersion, lessThan(minimumSupportedWindowsFlutterVersion));
+          when(() => releaser.releaseType).thenReturn(ReleaseType.windows);
+          when(
+            () => releaser.minimumFlutterVersion,
+          ).thenReturn(minimumSupportedWindowsFlutterVersion);
+          when(
+            () => shorebirdFlutter.resolveFlutterVersion(any()),
+          ).thenAnswer((_) async => sideVersion);
+
+          await runWithOverrides(() => command.assertArgsAreValid(releaser));
+
+          verify(releaser.assertArgsAreValid).called(1);
+        });
+
+        test('clears the obfuscation floor on iOS', () async {
+          final sideVersion = Version.parse('3.41.2-sb.1');
+          expect(sideVersion, lessThan(minimumObfuscationFlutterVersion));
+          when(() => releaser.releaseType).thenReturn(ReleaseType.ios);
+          when(() => releaser.useObfuscation).thenReturn(true);
+          when(
+            () => shorebirdFlutter.resolveFlutterVersion(any()),
+          ).thenAnswer((_) async => sideVersion);
+
+          await runWithOverrides(() => command.assertArgsAreValid(releaser));
+
+          verify(releaser.assertArgsAreValid).called(1);
+        });
+      });
 
       group('when obfuscating below the obfuscation map floor', () {
         late MockReleaser releaser;

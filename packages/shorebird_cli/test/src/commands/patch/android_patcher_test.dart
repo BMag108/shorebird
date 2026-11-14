@@ -1,3 +1,4 @@
+// cspell:words allprojects librust posthog
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -150,6 +151,9 @@ void main() {
       when(
         () => shorebirdEnv.getShorebirdProjectRoot(),
       ).thenReturn(projectRoot);
+      when(
+        () => shorebirdEnv.flutterRevision,
+      ).thenReturn('83305b5088e6fe327fb3334a73ff190828d85713');
 
       patcher = AndroidPatcher(
         argParser: argParser,
@@ -169,6 +173,15 @@ void main() {
     group('primaryReleaseArtifactArch', () {
       test('is "aab"', () {
         expect(patcher.primaryReleaseArtifactArch, equals('aab'));
+      });
+    });
+
+    group('supplementaryReleaseArtifactArch', () {
+      test('is "android_supplement"', () {
+        expect(
+          patcher.supplementaryReleaseArtifactArch,
+          equals('android_supplement'),
+        );
       });
     });
 
@@ -333,13 +346,16 @@ void main() {
         ).thenAnswer((_) async => aabFile);
       });
 
-      // See https://github.com/shorebirdtech/updater/issues/211
-      group('when flutter version contains updater issue 211', () {
+      // See https://docs.shorebird.dev/getting-started/flutter-version/#flutter-version-notes
+      group('when flutter version has the patch uninstall issue', () {
         setUp(() {
           setUpProjectRootArtifacts();
           when(
             () => shorebirdFlutter.getVersion(),
           ).thenAnswer((_) async => Version(3, 24, 1));
+          when(
+            () => shorebirdEnv.flutterRevision,
+          ).thenReturn('4150b0d8ee6354ee56dbc667bf5aee3e9d5eb1ca');
         });
 
         test('warns user of potential patch issues', () async {
@@ -351,20 +367,42 @@ void main() {
         });
       });
 
-      group('when flutter version does not contain updater issue 211', () {
-        setUp(() {
-          setUpProjectRootArtifacts();
-          when(
-            () => shorebirdFlutter.getVersion(),
-          ).thenAnswer((_) async => Version(3, 24, 2));
+      group('when flutter version does not have the patch uninstall issue', () {
+        setUp(setUpProjectRootArtifacts);
+
+        group('when on the fixed Flutter 3.24.1 revision', () {
+          setUp(() {
+            when(
+              () => shorebirdFlutter.getVersion(),
+            ).thenAnswer((_) async => Version(3, 24, 1));
+            when(
+              () => shorebirdEnv.flutterRevision,
+            ).thenReturn('a25b7cdfb9ef79f7d6dae48a6334a415f024a0a8');
+          });
+
+          test('does not warn user of potential patch issues', () async {
+            await runWithOverrides(patcher.buildPatchArtifact);
+
+            verifyNever(
+              () => logger.warn(AndroidPatcher.updaterPatchErrorWarning),
+            );
+          });
         });
 
-        test('does not warn user of potential patch issues', () async {
-          await runWithOverrides(patcher.buildPatchArtifact);
+        group('when on Flutter 3.24.2 or newer', () {
+          setUp(() {
+            when(
+              () => shorebirdFlutter.getVersion(),
+            ).thenAnswer((_) async => Version(3, 24, 2));
+          });
 
-          verifyNever(
-            () => logger.warn(AndroidPatcher.updaterPatchErrorWarning),
-          );
+          test('does not warn user of potential patch issues', () async {
+            await runWithOverrides(patcher.buildPatchArtifact);
+
+            verifyNever(
+              () => logger.warn(AndroidPatcher.updaterPatchErrorWarning),
+            );
+          });
         });
       });
 
@@ -571,7 +609,7 @@ void main() {
       group('when releaseVersion is provided', () {
         setUp(setUpProjectRootArtifacts);
 
-        test('forwards --build-name and --build-number to builder', () async {
+        test('passes only --build-name and --build-number', () async {
           await runWithOverrides(
             () => patcher.buildPatchArtifact(releaseVersion: '1.2.3+4'),
           );
@@ -579,10 +617,10 @@ void main() {
             () => artifactBuilder.buildAppBundle(
               flavor: any(named: 'flavor'),
               target: any(named: 'target'),
-              args: any(
-                named: 'args',
-                that: containsAll(['--build-name=1.2.3', '--build-number=4']),
-              ),
+              // Exactly these: every arg goes to `flutter build appbundle`,
+              // whose parser rejects anything it doesn't know (shorebird#4406
+              // added Gradle's --init-script here and broke every patch).
+              args: ['--build-name=1.2.3', '--build-number=4'],
             ),
           ).called(1);
         });

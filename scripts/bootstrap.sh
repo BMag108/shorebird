@@ -1,10 +1,21 @@
 #!/bin/bash
+#
+# Resolves every package in the repository, which is the whole workspace in the
+# root pubspec.
+set -euo pipefail
 
-# This script assumes that you already have $HOME/.pub-cache/bin as well as
-# Flutter's bin (for `dart`) in your PATH.
-# If you don't, add it to your .bashrc or .zshrc file.
-# export PATH=$HOME/.pub-cache/bin:$PATH
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Fetch dart dependencies
-dart pub global activate very_good_cli
-very_good packages get -r ./packages
+# A Dart of the version CI runs, not whichever one PATH answers with. The
+# reason is in tool/find_dart.sh.
+source tool/find_dart.sh
+find_dart "$(pwd)"
+if [ -z "$dart_bin" ]; then
+  exit 1
+fi
+export PATH="$(dirname "$dart_bin"):$PATH"
+
+# One get for the workspace. This was `very_good packages get -r ./packages`
+# from before the root pubspec listed a workspace, and very_good refuses
+# without a Flutter SDK on PATH. Nothing here depends on Flutter.
+dart pub get

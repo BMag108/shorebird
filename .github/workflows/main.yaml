@@ -1,3 +1,5 @@
+# cspell:words cmdline sdkmanager dists
+
 name: ci
 
 concurrency:
@@ -61,69 +63,14 @@ jobs:
       pull-requests: read
 
     outputs:
-      needs_cross_platform_dart_build: ${{ steps.needs_cross_platform_dart_build.outputs.changes }}
-      needs_redis_build: ${{ steps.needs_redis_build.outputs.changes }}
       needs_verify: ${{ steps.needs_verify.outputs.changes }}
+      android_build_e2e: ${{ steps.android_build_e2e.outputs.android }}
 
     name: 👀 Detect Changes
 
     steps:
       - name: 📚 Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        name: Build Detection
-        id: needs_cross_platform_dart_build
-        with:
-          filters: |
-            shorebird_cli:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/dex/**
-              - packages/scoped_deps/**
-              - packages/shorebird_build_trace/**
-              - packages/shorebird_cli/**
-              - packages/shorebird_code_push_client/**
-              - packages/shorebird_code_push_protocol/**
-              - pubspec.lock
-              - pubspec.yaml
-            shorebird_code_push_client:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/shorebird_code_push_client/**
-              - packages/shorebird_code_push_protocol/**
-              - pubspec.lock
-              - pubspec.yaml
-            shorebird_code_push_protocol:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/shorebird_code_push_protocol/**
-              - pubspec.lock
-              - pubspec.yaml
-            scoped_deps:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/scoped_deps/**
-              - pubspec.lock
-              - pubspec.yaml
-            shorebird_ci:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/shorebird_ci/**
-              - pubspec.lock
-              - pubspec.yaml
-
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        name: Redis Detection
-        id: needs_redis_build
-        with:
-          filters: |
-            redis_client:
-              - ./.github/workflows/main.yaml
-              - ./.github/actions/dart_package/action.yaml
-              - packages/redis_client/**
-              - pubspec.lock
-              - pubspec.yaml
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         name: Verify Detection
@@ -133,78 +80,119 @@ jobs:
             shorebird_cli:
               - ./.github/workflows/main.yaml
               - ./.github/actions/verify_version/action.yaml
+              - packages/dex/**
+              - packages/elf/**
+              - packages/macho/**
+              - packages/scoped_deps/**
+              - packages/shorebird_build_trace/**
               - packages/shorebird_cli/**
+              - packages/shorebird_code_push_client/**
+              - packages/shorebird_code_push_protocol/**
+              - pubspec.lock
+              - pubspec.yaml
             shorebird_code_push_client:
               - ./.github/workflows/main.yaml
               - ./.github/actions/verify_version/action.yaml
               - packages/shorebird_code_push_client/**
+              - packages/shorebird_code_push_protocol/**
+              - pubspec.lock
+              - pubspec.yaml
 
-  build_cross_platform_dart_packages:
-    needs: changes
-    if: ${{ needs.changes.outputs.needs_cross_platform_dart_build != '[]' }}
-
-    strategy:
-      matrix:
-        # Ubuntu only on pull requests; all three OSes on pushes to main and
-        # in the merge queue. GitHub bills macOS at ~10x and Windows at ~2x
-        # Linux, and from 2026-10-15 to 11-03 these legs cost ~$660 on PR
-        # runs while catching no test failure ubuntu missed (691 runs). A
-        # platform-only break now shows on main's push run instead.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["macos-latest", "windows-latest", "ubuntu-latest"]') }}
-        package: ${{ fromJSON(needs.changes.outputs.needs_cross_platform_dart_build) }}
-
-    runs-on: ${{ matrix.os }}
-
-    name: 🎯 Build ${{ matrix.package }} (${{ matrix.os }})
-
-    steps:
-      - name: 📚 Git Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: 🎯 Build ${{ matrix.package }}
-        uses: ./.github/actions/dart_package
+      # What a real `shorebird release android` and `patch android` run:
+      # the CLI and the packages it builds from, the Flutter it pins, and
+      # this job.
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        name: Android Build E2E Detection
+        id: android_build_e2e
         with:
-          working_directory: packages/${{ matrix.package }}
-          workspace_root: ${{ github.workspace }}
-          # Checked on ubuntu, the one OS every run has (PRs run no other).
-          # shorebird_cli's iOS and macOS tests run only on macOS, so its
-          # Linux number is ~4 points below macOS's; the floor is Linux's.
-          check_coverage: ${{ matrix.os == 'ubuntu-latest' }}
-          # Each package's Linux line coverage on 2026-11-03, rounded down,
-          # as a floor. Raise it as coverage rises; lower it only in a PR
-          # that says why (deleting well-tested code lowers the percentage).
-          # A package not listed needs 100.
-          min_coverage: ${{ fromJSON('{"shorebird_cli":"94.7","shorebird_code_push_client":"99.4","shorebird_code_push_protocol":"97.6","shorebird_ci":"99.7"}')[matrix.package] || '100' }}
+          filters: |
+            android:
+              - ./.github/workflows/main.yaml
+              - bin/**
+              - scripts/patch_e2e.dart
+              - scripts/e2e_helpers.dart
+              - scripts/no_android_sdk_downloads.sh
+              - packages/dex/**
+              - packages/elf/**
+              - packages/macho/**
+              - packages/scoped_deps/**
+              - packages/shorebird_build_trace/**
+              - packages/shorebird_cli/bin/**
+              - packages/shorebird_cli/lib/**
+              - packages/shorebird_cli/pubspec.yaml
+              - packages/shorebird_code_push_client/lib/**
+              - packages/shorebird_code_push_protocol/lib/**
+              - pubspec.lock
+              - pubspec.yaml
 
-  build_redis:
+  # A real Android release and patch built by this PR's CLI against dev,
+  # with no device: PR CI's unit tests mock the builds, so a `flutter build`
+  # or Gradle invocation no Flutter accepts used to show first in the nightly
+  # e2e (#4406's `--init-script`, red on 11-11 and 11-12). The nightly also
+  # runs the app on an emulator and covers older Flutter versions.
+  #
+  # Signs in with OIDC as dev's Shorebird E2E (437) e2e account, whose trust
+  # rule admits this file on refs/pull/*. GitHub gives a fork's PR no OIDC
+  # token, so a fork's PR skips it, as do Dependabot's (the nightly covers
+  # those).
+  android_build_e2e:
+    name: 🤖 Android Build E2E
     needs: changes
-    if: ${{ needs.changes.outputs.needs_redis_build != '[]' }}
-
-    strategy:
-      matrix:
-        package: ${{ fromJSON(needs.changes.outputs.needs_redis_build) }}
-
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]' &&
+      needs.changes.outputs.android_build_e2e == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
-    name: 🎯 Build ${{ matrix.package }}
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      SHOREBIRD_HOSTED_URL: https://api-dev.shorebird.dev
+      AUTH_SERVICE_URL: https://auth-dev.shorebird.dev
+      SHOREBIRD_PROJECT_ID: 437
 
     steps:
       - name: 📚 Git Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 🐳 Run Redis
-        run: |
-          docker pull redis/redis-stack-server:latest
-          docker run --name test_redis -d -p 6379:6379 --rm -e REDIS_ARGS="--requirepass password" redis/redis-stack-server:latest
+      - name: 🖥️ Add Shorebird to PATH
+        run: echo "${GITHUB_WORKSPACE}/bin/" >> "$GITHUB_PATH"
 
-      - name: 🎯 Build ${{ matrix.package }}
-        uses: ./.github/actions/dart_package
+      - name: 🐦 Install Shorebird
+        run: shorebird --version
+
+      - name: ☕ Set up Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
-          working_directory: packages/${{ matrix.package }}
-          workspace_root: ${{ github.workspace }}
-          # Line coverage on 2026-11-03 (98.04%), rounded down, as a floor;
-          # see the job above.
-          min_coverage: "98.0"
+          distribution: "temurin"
+          java-version: "17"
+
+      # The packages the pinned Flutter's build downloads otherwise; see
+      # e2e.yaml's patch job.
+      - name: 🤖 Install Android SDK Packages
+        timeout-minutes: 10
+        run: |
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
+
+      # e2e.yaml's android_signing cache (same app template and pinned
+      # Flutter), saved on main. Restore only: a PR's own save is usable by
+      # no other ref and fills the repo's 10 GB cache.
+      - name: 🐘 Gradle Cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists/*/*/*
+            !~/.gradle/wrapper/dists/*/*/*.zip
+          key: gradle-${{ runner.os }}-signing-${{ hashFiles('bin/internal/flutter.version') }}
+
+      - name: 🧪 Release and Patch Android
+        # With the Dart of the Flutter the CLI pins, as e2e.yaml's patch job.
+        run: ./scripts/no_android_sdk_downloads.sh "bin/cache/flutter/$(cat bin/internal/flutter.version)/bin/dart" scripts/patch_e2e.dart --no-device
 
   verify_packages:
     needs: changes
@@ -228,15 +216,7 @@ jobs:
           working_directory: packages/${{ matrix.package }}
 
   ci:
-    needs:
-      [
-        actionlint,
-        changes,
-        license_check,
-        build_cross_platform_dart_packages,
-        build_redis,
-        verify_packages,
-      ]
+    needs: [actionlint, android_build_e2e, changes, license_check, verify_packages]
     # Not always(): that keeps this job alive through a run cancellation,
     # so a superseded push would report ci red on the stale commit. A
     # skipped required check reports success, which is the right answer
